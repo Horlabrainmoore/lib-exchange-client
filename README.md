@@ -10,3 +10,199 @@ A JVM Artifact has been published to Maven Central and can be imported as
 ```
 compile group: 'com.blockchain', name: 'exchange-rest-api', version: '1.0.0'
 ```
+{
+  "minerReward": "0.077 BTC",
+  "transactionFeeRate": "24,639 sat/vB",
+  "miningPool": "Foundry.USA",
+  "bitcoinAddress": "bc1q2u5pen3g0w0402fds9q7e7nwur3BFzDj7sat",
+  "transactionHash": "1d38a7a3efa055b1452e128773e68eed5f68da39431cd40d238a8b52b2d75f0",
+  "opayAccount": {
+    "bank": "OPay Digital Services Limited",
+    "accountNumber": "7011977955",
+    "name": "ISRAEL OLANREWAJU KASALI"
+  }
+}import sqlite3
+import csv
+import requests
+
+# Database Configuration
+DB_FILE = "transactions.db"
+
+# Initialize Database
+def initialize_database():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Create transactions table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            transaction_id TEXT PRIMARY KEY,
+            btc_price_at_time REAL,
+            input_address TEXT,
+            input_amount REAL,
+            output_address TEXT,
+            output_amount REAL,
+            output_type TEXT
+        )
+    """)
+
+    # Create balance table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS balance (
+            address TEXT PRIMARY KEY,
+            btc_balance REAL,
+            usd_value REAL,
+            btc_price REAL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+# Save Transaction to Database
+def save_transaction_to_db(transaction):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    for out in transaction['outputs']:
+        cursor.execute("""
+            INSERT OR IGNORE INTO transactions (
+                transaction_id, btc_price_at_time, input_address, input_amount,
+                output_address, output_amount, output_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            transaction['transaction_id'],
+            transaction['btc_price'],
+            transaction['inputs'][0]['address'],
+            float(transaction['inputs'][0]['amount'].split()[0]),
+            out['address'],
+            float(out['amount'].split()[0]),
+            out.get('type', 'Standard')
+        ))
+
+    conn.commit()
+    conn.close()
+
+# Save Balance to Database
+def save_balance_to_db(balance):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO balance (
+            address, btc_balance, usd_value, btc_price
+        ) VALUES (?, ?, ?, ?)
+    """, (
+        balance['address'],
+        balance['btc_balance'],
+        balance['usd_value'],
+        balance['btc_price']
+    ))
+
+    conn.commit()
+    conn.close()
+
+# Fetch Transaction by ID
+def get_transaction_by_id(transaction_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM transactions WHERE transaction_id = ?", (transaction_id,))
+    result = cursor.fetchall()
+
+    conn.close()
+    return result
+
+# Fetch Balance by Address
+def get_balance_by_address(address):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM balance WHERE address = ?", (address,))
+    result = cursor.fetchall()
+
+    conn.close()
+    return result
+
+# Delete Transaction by ID
+def delete_transaction(transaction_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute("DELETE FROM transactions WHERE transaction_id = ?", (transaction_id,))
+    conn.commit()
+
+    conn.close()
+
+# Export Data to CSV
+def export_to_csv(table_name, file_name):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    cursor.execute(f"SELECT * FROM {table_name}")
+    rows = cursor.fetchall()
+    headers = [description[0] for description in cursor.description]
+
+    with open(file_name, mode="w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(headers)
+        writer.writerows(rows)
+
+    conn.close()
+    print(f"Data from {table_name} exported to {file_name}.")
+
+# Fetch Live Transaction Data from API
+def fetch_transaction_from_api(tx_id):
+    url = f"https://api.blockcypher.com/v1/btc/main/txs/{tx_id}?includeHex=true"
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print("Error fetching transaction data:", response.text)
+        return None
+
+# Main Execution
+if __name__ == "__main__":
+    # Initialize the database
+    initialize_database()
+
+    # Example transaction and balance data
+    transaction = {
+        "transaction_id": "9117b44e7253e710b2cd90507963a0388384f035404fa136c8959f2822342386",
+        "inputs": [
+            {"address": "bc1q0qfzuge7vr5s2xkczrjkccmxemlyyn8mhx298v", "amount": "0.26740253 BTC"}
+        ],
+        "outputs": [
+            {"address": "bc1qt7rpvvj0jnwasl6a725hefyvecz7y5c5qst8a8", "amount": "0.00306128 BTC"},
+            {"address": "3BFzDJzsqyT6aoPXtcLQbEGWGNPXJfoyMc", "amount": "0.26433687 BTC", "type": "Change"}
+        ],
+        "btc_price": 97034,
+    }
+
+    balance = {
+        "address": "3BFzDJzsqyT6aoPXtcLQbEGWGNPXJfoyMc",
+        "btc_balance": 54.3578619,
+        "usd_value": 5270019.71,
+        "btc_price": 96950,
+    }
+
+    # Save data to the database
+    save_transaction_to_db(transaction)
+    save_balance_to_db(balance)
+
+    # Fetch and display transaction by ID
+    transaction_id = "9117b44e7253e710b2cd90507963a0388384f035404fa136c8959f2822342386"
+    print("Transaction by ID:", get_transaction_by_id(transaction_id))
+
+    # Fetch and display balance by address
+    address = "3BFzDJzsqyT6aoPXtcLQbEGWGNPXJfoyMc"
+    print("Balance by Address:", get_balance_by_address(address))
+
+    # Delete a transaction
+    delete_transaction(transaction_id)
+    print(f"Transaction {transaction_id} deleted.")
+
+    # Export data to CSV
+    export_to_csv("transactions", "transactions.csv")
+    export_to_csv("balance", "balance.csv")
